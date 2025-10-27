@@ -17,12 +17,12 @@
 
 package io.github.spark_redshift_community.spark.redshift.test
 
-import com.amazonaws.auth.{AWSSessionCredentials, BasicAWSCredentials, BasicSessionCredentials, DefaultAWSCredentialsProviderChain}
 import io.github.spark_redshift_community.spark.redshift.Parameters
 import io.github.spark_redshift_community.spark.redshift.Parameters.{MergedParameters, PARAM_TEMPORARY_AWS_ACCESS_KEY_ID, PARAM_TEMPORARY_AWS_SECRET_ACCESS_KEY, PARAM_TEMPORARY_AWS_SESSION_TOKEN}
 import io.github.spark_redshift_community.spark.redshift.AWSCredentialsUtils
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
+import software.amazon.awssdk.auth.credentials.{AwsBasicCredentials, AwsCredentials, AwsCredentialsProvider, AwsSessionCredentials, DefaultCredentialsProvider}
 
 import scala.language.implicitConversions
 
@@ -40,10 +40,14 @@ class AWSCredentialsUtilsSuite extends AnyFunSuite {
   }
 
   test("credentialsString with regular keys") {
-    val creds = new BasicAWSCredentials("ACCESSKEYID", "SECRET/KEY/WITH/SLASHES")
+    val creds = AwsBasicCredentials.create("ACCESSKEYID", "SECRET/KEY/WITH/SLASHES")
+    // Create a simple AWSCredentialsProvider that returns our test credentials
+    val credProvider = new AwsCredentialsProvider {
+      override def resolveCredentials(): AwsCredentials = creds
+    }
     val params =
       Parameters.mergeParameters(baseParams ++ Map("forward_spark_s3_credentials" -> "true"))
-    assert(AWSCredentialsUtils.getRedshiftCredentialsString(params, creds) ===
+    assert(AWSCredentialsUtils.getRedshiftCredentialsString(params, credProvider) ===
       "aws_access_key_id=ACCESSKEYID;aws_secret_access_key=SECRET/KEY/WITH/SLASHES")
   }
 
@@ -57,7 +61,7 @@ class AWSCredentialsUtilsSuite extends AnyFunSuite {
   }
 
   test("Configured IAM roles should take precedence") {
-    val creds = new BasicSessionCredentials("ACCESSKEYID", "SECRET/KEY", "SESSION/Token")
+    val creds = AwsSessionCredentials.create("ACCESSKEYID", "SECRET/KEY", "SESSION/Token")
     val iamRole = "arn:aws:iam::123456789000:role/redshift_iam_role"
     val params = Parameters.mergeParameters(baseParams ++ Map("aws_iam_role" -> iamRole))
     assert(AWSCredentialsUtils.getRedshiftCredentialsString(params, null) ===
@@ -76,22 +80,22 @@ class AWSCredentialsUtilsSuite extends AnyFunSuite {
       PARAM_TEMPORARY_AWS_SESSION_TOKEN -> "token"
     ))
 
-    val creds = AWSCredentialsUtils.load(params, conf).getCredentials
-    assert(creds.isInstanceOf[AWSSessionCredentials])
-    assert(creds.getAWSAccessKeyId === "key_id")
-    assert(creds.getAWSSecretKey === "secret")
-    assert(creds.asInstanceOf[AWSSessionCredentials].getSessionToken === "token")
+    val creds = AWSCredentialsUtils.load(params, conf).resolveCredentials()
+    assert(creds.isInstanceOf[AwsSessionCredentials])
+    assert(creds.accessKeyId() === "key_id")
+    assert(creds.secretAccessKey() === "secret")
+    assert(creds.asInstanceOf[AwsSessionCredentials].sessionToken() === "token")
   }
 
   test("AWSCredentials.load() credentials precedence for s3:// URIs") {
     {
       val creds = AWSCredentialsUtils.load("s3://URIID:URIKEY@bucket/path", null)
-      assert(creds.isInstanceOf[DefaultAWSCredentialsProviderChain])
+      assert(creds.isInstanceOf[DefaultCredentialsProvider])
     }
 
     {
       val creds = AWSCredentialsUtils.load("s3://bucket/path", null)
-      assert(creds.isInstanceOf[DefaultAWSCredentialsProviderChain])
+      assert(creds.isInstanceOf[DefaultCredentialsProvider])
     }
 
   }
@@ -99,12 +103,12 @@ class AWSCredentialsUtilsSuite extends AnyFunSuite {
   test("AWSCredentials.load() credentials precedence for s3n:// URIs") {
     {
       val creds = AWSCredentialsUtils.load("s3n://URIID:URIKEY@bucket/path", null)
-      assert(creds.isInstanceOf[DefaultAWSCredentialsProviderChain])
+      assert(creds.isInstanceOf[DefaultCredentialsProvider])
     }
 
     {
       val creds = AWSCredentialsUtils.load("s3n://bucket/path", null)
-      assert(creds.isInstanceOf[DefaultAWSCredentialsProviderChain])
+      assert(creds.isInstanceOf[DefaultCredentialsProvider])
     }
 
   }
@@ -112,12 +116,12 @@ class AWSCredentialsUtilsSuite extends AnyFunSuite {
   test("AWSCredentials.load() credentials precedence for s3a:// URIs") {
     {
       val creds = AWSCredentialsUtils.load("s3a://URIID:URIKEY@bucket/path", null)
-      assert(creds.isInstanceOf[DefaultAWSCredentialsProviderChain])
+      assert(creds.isInstanceOf[DefaultCredentialsProvider])
     }
 
     {
       val creds = AWSCredentialsUtils.load("s3a://bucket/path", null)
-      assert(creds.isInstanceOf[DefaultAWSCredentialsProviderChain])
+      assert(creds.isInstanceOf[DefaultCredentialsProvider])
     }
 
   }
