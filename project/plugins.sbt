@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+addSbtPlugin("org.xerial.sbt" % "sbt-sonatype" % "3.11.2")
 
 addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.0.7")
 

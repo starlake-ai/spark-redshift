@@ -24,10 +24,16 @@ import scoverage.ScoverageKeys
 import java.util.Properties
 import java.io.FileInputStream
 
-val buildScalaVersion = sys.props.get("scala.buildVersion").getOrElse("2.12.15")
+val buildScalaVersion = sys.props.get("scala.buildVersion").getOrElse("2.13.9")
+
 val sparkVersion = "3.5.6"
+
 val isInternalRepo = "true" equalsIgnoreCase System.getProperty("config.InternalRepo")
-val publishSonatypeCentral = "true" equalsIgnoreCase System.getProperty("config.publishSonatypeCentral")
+
+val publishSonatypeCentral =
+  "true".equalsIgnoreCase(System.getProperty("config.publishSonatypeCentral"))
+
+// crossScalaVersions := Seq(buildScalaVersion, "2.13.9")
 
 // Define a custom test configuration so that unit test helper classes can be re-used under
 // the integration tests configuration; see http://stackoverflow.com/a/20635808.
@@ -55,7 +61,8 @@ def incompatibleSparkVersions(): FileFilter = {
   val minor = versionArray(1)
 
   new FileFilter {
-    def accept(f: File): Boolean = f.getPath.containsSlice("_spark_") && !f.getPath.containsSlice(s"_spark_${major}_${minor}_")
+    def accept(f: File): Boolean =
+      f.getPath.containsSlice("_spark_") && !f.getPath.containsSlice(s"_spark_${major}_${minor}_")
   }
 }
 
@@ -97,7 +104,8 @@ def internalRepoSettings(): Seq[Def.Setting[_]] = {
       }
     },
     resolvers := Seq(fetchRealm at fetchRepo),
-    externalResolvers := Resolver.combineDefaultResolvers(resolvers.value.toVector, mavenCentral = false),
+    externalResolvers :=
+      Resolver.combineDefaultResolvers(resolvers.value.toVector, mavenCentral = false),
     releaseProcess := Seq[ReleaseStep](publishArtifacts)
   )
   
@@ -105,10 +113,12 @@ def internalRepoSettings(): Seq[Def.Setting[_]] = {
     Seq(
       publishTo := {
         val centralSnapshots = "https://central.sonatype.com/repository/maven-snapshots/"
-        if (isSnapshot.value) Some("central-snapshots" at centralSnapshots)
-        else localStaging.value
+        if (isSnapshot.value) {
+          Some("central-snapshots" at centralSnapshots)
+        } else {
+          localStaging.value
+        }
       },
-      useGpg := true,
       publishMavenStyle := true,
       pomIncludeRepository := { _ => false }
     )
@@ -118,19 +128,19 @@ def internalRepoSettings(): Seq[Def.Setting[_]] = {
       pomIncludeRepository := { (_: MavenRepository) => false }
     )
   }
-  
+
   baseSettings ++ publishSettings
 }
 
 def externalRepoSettings(): Seq[Def.Setting[_]] = {
   Seq(
     credentials += Credentials(baseDirectory.value / "sonatype_central_credentials"),
-    resolvers += "Sonatype" at "https://oss.sonatype.org/content/groups/public",
-    useGpg := true,
     publishTo := {
-      val centralSnapshots = "https://central.sonatype.com/repository/maven-snapshots/"
-      if (isSnapshot.value) Some("central-snapshots" at centralSnapshots)
-      else localStaging.value
+      // For accounts created after Feb 2021:
+      // val nexus = "https://s01.oss.sonatype.org/"
+      val nexus = "https://central.sonatype.com/"
+      if (isSnapshot.value) Some("snapshots" at nexus + "repository/maven-snapshots")
+      else Some("releases" at nexus + "service/local/staging/deploy/maven2")
     },
     publishMavenStyle := true,
     pomIncludeRepository := { _ => false },
@@ -139,12 +149,8 @@ def externalRepoSettings(): Seq[Def.Setting[_]] = {
       inquireVersions,
       runTest,
       setReleaseVersion,
-      commitReleaseVersion,
       tagRelease,
       publishArtifacts,
-      setNextVersion,
-      commitNextVersion,
-      pushChanges
     )
   )
 }
@@ -174,17 +180,21 @@ lazy val root = Project("spark-redshift", file("."))
     else Nil
   )
   .settings(
-    if (runOnPrebuiltJar)
+    if (runOnPrebuiltJar) {
       Seq( Compile / sources := Seq.empty)
-    else Nil
+    } else {
+      Nil
+    }
   )
   .settings(
     unmanagedSources / excludeFilter ~= { _ || HiddenFileFilter || incompatibleSparkVersions()},
     name := "spark-redshift",
-    version += s"-spark_${releaseSparkVersion}",
-    organization := "io.github.spark-redshift-community",
+    version += s"-spark_${releaseSparkVersion}-SNAPSHOT",
+    organization := "ai.starlake",
+    // organization := "io.github.spark-redshift-community",
     scalaVersion := buildScalaVersion,
     licenses += "Apache-2.0" -> url("http://opensource.org/licenses/Apache-2.0"),
+    credentials += Credentials(Path.userHome / ".sbt" / "sonatype_credentials"),
     scalacOptions ++= Seq("-target:jvm-1.8"),
     javacOptions ++= Seq("-source", "1.8", "-target", "1.8"),
     libraryDependencies ++= Seq(
@@ -230,10 +240,12 @@ lazy val root = Project("spark-redshift", file("."))
     Compile / packageBin := {
         usePrebuiltJar.getOrElse((Compile / packageBin).value)
     },
-    /********************
-     * Release settings *
-     ********************/
 
+    // Release settings
+
+
+    sonatypeProfileName := "ai.starlake",
+    sonatypeCredentialHost := "central.sonatype.com",
     publishMavenStyle := true,
     releaseCrossBuild := true,
     licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0")),
