@@ -189,7 +189,6 @@ lazy val root = Project("spark-redshift", file("."))
   .settings(
     unmanagedSources / excludeFilter ~= { _ || HiddenFileFilter || incompatibleSparkVersions()},
     name := "spark-redshift",
-    version += s"-spark_${releaseSparkVersion}-SNAPSHOT",
     organization := "ai.starlake",
     // organization := "io.github.spark-redshift-community",
     scalaVersion := buildScalaVersion,

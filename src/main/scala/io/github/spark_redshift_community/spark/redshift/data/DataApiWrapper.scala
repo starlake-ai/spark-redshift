@@ -157,7 +157,7 @@ private[redshift] class DataApiWrapper extends RedshiftWrapper with Serializable
     if (dataApiConnection.bufferedCommands.length > 0) {
 
       // Execute the buffered commands (if any).
-      executeBatch(conn, dataApiConnection.bufferedCommands)
+      executeBatch(conn, dataApiConnection.bufferedCommands.toSeq)
 
       // Reset for next time.
       dataApiConnection.bufferedCommands.clear()
@@ -481,6 +481,6 @@ private[redshift] class DataApiWrapper extends RedshiftWrapper with Serializable
         }
     }
 
-    (query, Option(parameters))
+    (query, Option(parameters.toSeq))
   }
 }
