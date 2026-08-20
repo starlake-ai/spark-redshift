@@ -14,4 +14,4 @@
  * limitations under the License.
  */
 
-ThisBuild / version := "7.0.0"
+ThisBuild / version := "7.0.1-SNAPSHOT"
