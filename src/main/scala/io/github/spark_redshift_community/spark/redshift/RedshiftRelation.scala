@@ -121,7 +121,7 @@ case class RedshiftRelation(
     if (requiredColumns.isEmpty) {
       // In the special case where no columns were requested, issue a `count(*)` against Redshift
       // rather than unloading data.
-      val whereClause = FilterPushdown.buildWhereClause(schema, filters)
+      val whereClause = FilterPushdown.buildWhereClause(schema, filters.toIndexedSeq)
       val countQuery = s"SELECT count(*) FROM $tableNameOrSubquery $whereClause"
       val conn = redshiftWrapper.getConnectorWithQueryGroup(params, queryGroup)
       try {
@@ -179,7 +179,7 @@ case class RedshiftRelation(
     assert(!requiredColumns.isEmpty)
     // Always quote column names:
     val columnList = requiredColumns.map(col => s""""$col"""").mkString(", ")
-    val whereClause = FilterPushdown.buildWhereClause(schema, filters, escapeQuote = true)
+    val whereClause = FilterPushdown.buildWhereClause(schema, filters.toIndexedSeq, escapeQuote = true)
     val credsString: String =
       AWSCredentialsUtils.getRedshiftCredentialsString(params, credsProvider)
     val query = {
@@ -254,7 +254,7 @@ case class RedshiftRelation(
   }
 
   private def pruneSchema(schema: StructType, columns: Array[String]): StructType = {
-    val fieldMap = Map(schema.fields.map(x => x.name -> x): _*)
+    val fieldMap = Map(schema.fields.map(x => x.name -> x).toSeq: _*)
     new StructType(columns.map(name => fieldMap(name)))
   }
 
@@ -479,7 +479,7 @@ case class RedshiftRelation(
     }
 
     if (conversionNeeded) {
-      jsonLoaded.queryExecution.executedPlan.execute.map({ row: InternalRow =>
+      jsonLoaded.queryExecution.executedPlan.execute().map({ row: InternalRow =>
         val typeConvertedRow = row.toSeq(jsonLoadedSchema).zipWithIndex.map {
           case (f, i) =>
             parquetDataTypeConvert(f, resultSchema.fields(i).dataType,

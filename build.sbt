@@ -24,10 +24,32 @@ import scoverage.ScoverageKeys
 import java.util.Properties
 import java.io.FileInputStream
 
-val buildScalaVersion = sys.props.get("scala.buildVersion").getOrElse("2.13.9")
+// The latest connector supports Spark versions 3.3.x, 3.4.x, 3.5.x, 4.0.x, and 4.1.x
+val sparkVersion = "4.1.3"
+// val sparkVersion = "4.0.2"
+// val sparkVersion = "3.5.8"
+// val sparkVersion = "3.4.4"
+// val sparkVersion = "3.3.4"
 
-val sparkVersion = "3.5.6"
+// Determine Spark, Scala, Hadoop, and SDK versions.
+val testSparkVersion = sys.props.get("spark.testVersion").getOrElse(sparkVersion)
+val releaseSparkVersion = testSparkVersion.substring(0, testSparkVersion.lastIndexOf("."))
+val versionArray = releaseSparkVersion.split("""\.""").map(Integer.parseInt)
+val sparkMajorVersion = versionArray(0)
+val sparkMinorVersion = versionArray(1)
 
+val buildScalaVersion = sys.props.get("scala.buildVersion").getOrElse {
+  if (sparkMajorVersion >= 4) "2.13.18" else "2.12.15"
+}
+
+val testHadoopVersion = sys.props.get("hadoop.testVersion").getOrElse("3.4.2")
+
+// DON'T UPGRADE AWS-SDK-JAVA if not compatible with the Hadoop version
+val testAWSJavaSDKVersion = sys.props.get("aws.testVersion").getOrElse("2.45.1")
+// Determine JDBC driver version
+val testJDBCVersion = sys.props.get("jdbc.testVersion").getOrElse("2.2.7")
+
+// Determine which binary repo to use
 val isInternalRepo = "true" equalsIgnoreCase System.getProperty("config.InternalRepo")
 
 val publishSonatypeCentral =
@@ -38,20 +60,13 @@ val publishSonatypeCentral =
 // Define a custom test configuration so that unit test helper classes can be re-used under
 // the integration tests configuration; see http://stackoverflow.com/a/20635808.
 lazy val ItTest = config("it") extend Test
-val testSparkVersion = sys.props.get("spark.testVersion").getOrElse(sparkVersion)
-val testHadoopVersion = sys.props.get("hadoop.testVersion").getOrElse("3.3.4")
-val testJDBCVersion = sys.props.get("jdbc.testVersion").getOrElse("2.1.0.34")
-// DON't UPGRADE AWS-SDK-JAVA if not compatible with hadoop version
-val testAWSJavaSDKVersion = sys.props.get("aws.testVersion").getOrElse("2.31.78")
-// access tokens for aws/shared and our own internal CodeArtifacts repo
-// these are retrieved during CodeBuild steps
+
+// Define access tokens for aws/shared and our own internal CodeArtifacts repo
+// These are retrieved during CodeBuild steps
 val awsSharedRepoPass = sys.props.get("ci.internalCentralMvnPassword").getOrElse("")
 val internalReleaseRepoPass = sys.props.get("ci.internalTeamMvnPassword").getOrElse("")
-// remove the PATCH portion of the spark version number for use in release binary
-// e.g. MAJOR.MINOR.PATCH => MAJOR.MINOR
-val releaseSparkVersion = testSparkVersion.substring(0, testSparkVersion.lastIndexOf("."))
-val releaseScalaVersion = buildScalaVersion.substring(0, buildScalaVersion.lastIndexOf("."))
 
+// Determine which binary to use
 lazy val runOnPrebuiltJar = sys.props.contains("ci.integrationtest")
 lazy val usePrebuiltJar = sys.props.get("prebuiltJarPath").map(file).filter(_.exists)
 
@@ -61,8 +76,14 @@ def incompatibleSparkVersions(): FileFilter = {
   val minor = versionArray(1)
 
   new FileFilter {
-    def accept(f: File): Boolean =
-      f.getPath.containsSlice("_spark_") && !f.getPath.containsSlice(s"_spark_${major}_${minor}_")
+    def accept(f: File): Boolean = {
+      if (!f.getPath.containsSlice("_spark_")) return false
+      // Current version's shim is always compatible
+      if (f.getPath.containsSlice(s"_spark_${major}_${minor}_")) return false
+      // Spark 4.1 reuses 4.0 shims (identical APIs)
+      if (major == 4 && minor == 1 && f.getPath.containsSlice("_spark_4_0_")) return false
+      true
+    }
   }
 }
 
@@ -89,12 +110,12 @@ def loadCiProperties(): (String, String, String, String, String, String, String)
 def internalRepoSettings(): Seq[Def.Setting[_]] = {
   val props = loadCiProperties()
   val (fetchRealm, publishRealm, fetchUrl, publishUrl, fetchRepo, publishRepo, userName) = props
-  
+
   val baseCredentials = Seq(
     Credentials(fetchRealm.replace("--", "/"), fetchUrl, userName, awsSharedRepoPass),
     Credentials(publishRealm.replace("--", "/"), publishUrl, userName, internalReleaseRepoPass)
   )
-  
+
   val baseSettings = Seq(
     credentials := {
       if (publishSonatypeCentral) {
@@ -108,7 +129,7 @@ def internalRepoSettings(): Seq[Def.Setting[_]] = {
       Resolver.combineDefaultResolvers(resolvers.value.toVector, mavenCentral = false),
     releaseProcess := Seq[ReleaseStep](publishArtifacts)
   )
-  
+
   val publishSettings = if (publishSonatypeCentral) {
     Seq(
       publishTo := {
@@ -135,6 +156,7 @@ def internalRepoSettings(): Seq[Def.Setting[_]] = {
 def externalRepoSettings(): Seq[Def.Setting[_]] = {
   Seq(
     credentials += Credentials(baseDirectory.value / "sonatype_central_credentials"),
+    resolvers += "Sonatype" at "https://oss.sonatype.org/content/groups/public",
     publishTo := {
       // For accounts created after Feb 2021:
       // val nexus = "https://s01.oss.sonatype.org/"
@@ -152,6 +174,52 @@ def externalRepoSettings(): Seq[Def.Setting[_]] = {
       tagRelease,
       publishArtifacts,
     )
+  )
+}
+
+def getScalacOptions(): Seq[String] = {
+  if (sparkMajorVersion >= 4) {
+    Seq("-target:17")
+  } else {
+    Seq("-target:jvm-1.8")
+  }
+}
+
+def getJavacOptions(): Seq[String] = {
+  if (sparkMajorVersion >= 4) {
+    Seq("-source", "17", "-target", "17")
+  } else {
+    Seq("-source", "1.8", "-target", "1.8")
+  }
+}
+
+def getJavaOptions(): Seq[String] = {
+  Seq(
+    "-Xms512M",
+    "-Xmx4096M",
+    "-Duser.timezone=GMT",
+    "-Dscala.concurrent.context.maxThreads=10",
+
+    // Must add the following JVM options for using Spark with Java 17
+    // https://stackoverflow.com/questions/78700208/symbolic-reference-class-is-not-accessible-class-sun-util-calendar-zoneinfo-fr
+    "-XX:+IgnoreUnrecognizedVMOptions",
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+    "--add-opens=java.base/java.io=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/java.util=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED",
+    "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+    "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+    "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
+    "--add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED",
+    "-Djdk.reflect.useDirectMethodHandle=false",
+    "-Dio.netty.tryReflectionSetAccessible=true"
   )
 }
 
@@ -194,8 +262,8 @@ lazy val root = Project("spark-redshift", file("."))
     scalaVersion := buildScalaVersion,
     licenses += "Apache-2.0" -> url("http://opensource.org/licenses/Apache-2.0"),
     credentials += Credentials(Path.userHome / ".sbt" / "sonatype_credentials"),
-    scalacOptions ++= Seq("-target:jvm-1.8"),
-    javacOptions ++= Seq("-source", "1.8", "-target", "1.8"),
+    scalacOptions ++= getScalacOptions(),
+    javacOptions ++= getJavacOptions(),
     libraryDependencies ++= Seq(
       "org.slf4j" % "slf4j-api" % "2.0.7" % "provided",
       "com.google.guava" % "guava" % "32.1.2-jre" % "test",
@@ -207,6 +275,7 @@ lazy val root = Project("spark-redshift", file("."))
       "software.amazon.awssdk" % "redshiftdata" % testAWSJavaSDKVersion % "provided",
       "software.amazon.awssdk" % "regions" % testAWSJavaSDKVersion % "provided",
       "software.amazon.awssdk" % "s3" % testAWSJavaSDKVersion % "provided",
+      "software.amazon.awssdk" % "s3-transfer-manager" % testAWSJavaSDKVersion % "provided",
       "software.amazon.awssdk" % "secretsmanager" % testAWSJavaSDKVersion % "test",
       "software.amazon.awssdk" % "sdk-core" % testAWSJavaSDKVersion % "provided",
       "software.amazon.awssdk" % "utils" % testAWSJavaSDKVersion % "provided",
@@ -220,11 +289,16 @@ lazy val root = Project("spark-redshift", file("."))
 
       "org.apache.hadoop" % "hadoop-aws" % testHadoopVersion % "provided" excludeAll
         (ExclusionRule(organization = "com.fasterxml.jackson.core"))
-        exclude("org.apache.hadoop", "hadoop-common"),
+        exclude("org.apache.hadoop", "hadoop-common")
+        exclude("software.amazon.awssdk", "bundle"),
       "org.apache.spark" %% "spark-core" % testSparkVersion % "provided" exclude("org.apache.hadoop", "hadoop-client") force(),
       "org.apache.spark" %% "spark-sql" % testSparkVersion % "provided" exclude("org.apache.hadoop", "hadoop-client") force(),
       "org.apache.spark" %% "spark-hive" % testSparkVersion % "provided" exclude("org.apache.hadoop", "hadoop-client") force(),
       "org.apache.spark" %% "spark-avro" % testSparkVersion % "provided" exclude("org.apache.avro", "avro-mapred") force()
+    ),
+    excludeDependencies ++= Seq(
+      // Excluding jackson-mapper-asl due to known CVEs and it's not used by this project
+      ExclusionRule(organization = "org.codehaus.jackson", name = "jackson-mapper-asl")
     ),
     retrieveManaged := true,
     ScoverageKeys.coverageHighlighting := true,
@@ -232,8 +306,7 @@ lazy val root = Project("spark-redshift", file("."))
     // Display full-length stacktraces from ScalaTest:
     Test / testOptions += Tests.Argument("-oF"),
     Test / fork := true,
-    Test / javaOptions ++= Seq("-Xms512M", "-Xmx2048M", "-XX:MaxPermSize=2048M",
-      "-Duser.timezone=GMT", "-Dscala.concurrent.context.maxThreads=5"),
+    Test / javaOptions ++= getJavaOptions(),
 
     Compile / sources := {
       if (usePrebuiltJar.isDefined) Seq.empty
@@ -260,6 +333,11 @@ lazy val root = Project("spark-redshift", file("."))
       <connection>scm:git:git@github.com:spark_redshift_community/spark.redshift.git</connection>
     </scm>
     <developers>
+      <developer>
+        <id>bsharifi</id>
+        <name>Beaux Sharifi</name>
+        <url>https://github.com/bsharifi</url>
+      </developer>
       <developer>
         <id>meng</id>
         <name>Xiangrui Meng</name>

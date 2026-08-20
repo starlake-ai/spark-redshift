@@ -105,7 +105,7 @@ You may use this library in your applications with the following dependency info
     spark-submit \
       --deploy-mode cluster \
       --master yarn \
-      --packages com.amazon.redshift:redshift-jdbc42:2.1.0.34,org.apache.spark:spark-avro_2.12:3.5.6,io.github.spark-redshift-community:spark-redshift_2.12:6.5.1-spark_3.5 \
+      --packages com.amazon.redshift:redshift-jdbc42:2.2.7,org.apache.spark:spark-avro_2.13:4.1.0,io.github.spark-redshift-community:spark-redshift_2.13:6.7.0-spark_4.1 \
       my_script.py
     ```
 
@@ -115,15 +115,15 @@ You may use this library in your applications with the following dependency info
     ```XML
     <dependency>
         <groupId>io.github.spark-redshift-community</groupId>
-        <artifactId>spark-redshift_2.12</artifactId>
-        <version>6.5.1-spark_3.5</version>
+        <artifactId>spark-redshift_2.13</artifactId>
+        <version>6.7.0-spark_4.1</version>
     </dependency>
     ```
 
 - **In SBT**:
 
     ```SBT
-    libraryDependencies += "io.github.spark-redshift-community" %% "spark-redshift_2.12" % "6.5.1-spark_3.5"
+    libraryDependencies += "io.github.spark-redshift-community" %% "spark-redshift" % "6.7.0-spark_4.1"
     ```
 
 ### Local builds
@@ -132,7 +132,7 @@ You may also build the connector locally by following the below steps.
 2. Install Java 1.8
 3. Install scala (https://www.scala-lang.org/download/)
 4. Install sbt (https://www.scala-sbt.org/download/)
-5. Modify the value `sparkVersion` within `build.sbt` to the target version of Spark. The connector supports Spark 3.3.x, 3.4.x, and 3.5.x
+5. Modify the value `sparkVersion` within `build.sbt` to the target version of Spark. The connector supports Spark 3.3.x, 3.4.x, 3.5.x, 4.0.x, and 4.1.x
 6. Build the connector `sbt clean package`
 7. The jar file can be found in `target\scala-2.12\`
 
@@ -901,7 +901,7 @@ for more information.</p>
     <td>""</td>
     <td>
         An identifier to include in the query group set when running queries with the connector. Should be 100 or fewer characters and all characters must be valid unicodeIdentifierParts. Characters in excess of 100 will be trimmed.
-        When running a query with the connector a json formatted string will be set as the query group (for example `{"spark-redshift-connector":{"svc":"","ver":"6.5.1-spark_3.5","op":"Read","lbl":"","tid":""}}`). 
+        When running a query with the connector a json formatted string will be set as the query group (for example `{"spark-redshift-connector":{"svc":"","ver":"6.7.0-spark_4.1","op":"Read","lbl":"","tid":""}}`). 
         This option will be substituted for the value of the `lbl` key.
     </td>
 </tr>
@@ -1074,7 +1074,7 @@ var sparkConf = new SparkConf().set("spark.datasource.redshift.community.reject_
 ### trace_id
 A new tracing identifier field that is added to the existing `label` parameter. When set, the provided string value will be used as part of label. Otherwise, it will default to the Spark application identifier. For example:
 
-`{"spark-redshift-connector":{"svc":"","ver":"6.5.1-spark_3.5","op":"Read","lbl":"","tid":"..."}}`)
+`{"spark-redshift-connector":{"svc":"","ver":"6.7.0-spark_4.1","op":"Read","lbl":"","tid":"..."}}`)
 
 To set the value, run the following command:
 ```sparksql

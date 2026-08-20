@@ -88,7 +88,6 @@ private[redshift] class RedshiftWriter(
    * Generate the COPY SQL command
    */
   private def copySql(
-      sqlContext: SQLContext,
       schema: StructType,
       params: MergedParameters,
       creds: AwsCredentialsProvider,
@@ -160,7 +159,7 @@ private[redshift] class RedshiftWriter(
 
     manifestUrl.foreach { manifestUrl =>
       // Load the temporary data into the new file
-      val copyStatement = copySql(data.sqlContext, data.schema, params, creds, manifestUrl)
+      val copyStatement = copySql(data.schema, params, creds, manifestUrl)
 
       try {
         redshiftWrapper.executeInterruptibly(conn, copyStatement)
@@ -316,7 +315,7 @@ private[redshift] class RedshiftWriter(
 
     val convertedRows: RDD[Row] = complexTypesReplaced.rdd.mapPartitions { iter: Iterator[Row] =>
       if (iter.hasNext) {
-        nonEmptyPartitions.add(TaskContext.get.partitionId())
+        nonEmptyPartitions.add(TaskContext.get().partitionId())
       }
       iter.map { row =>
         val convertedValues: Array[Any] = new Array(conversionFunctions.length)
@@ -325,7 +324,7 @@ private[redshift] class RedshiftWriter(
           convertedValues(i) = conversionFunctions(i)(row(i))
           i += 1
         }
-        Row.fromSeq(convertedValues)
+        Row.fromSeq(convertedValues.toIndexedSeq)
       }
     }
 
@@ -391,7 +390,7 @@ private[redshift] class RedshiftWriter(
       // length is necessary for parquet format
       val filesToLoad: Seq[(String, Long)] = {
         val nonEmptyPartitionIds = nonEmptyPartitions.value.toSet
-        fs.listStatus(new Path(tempDir)).map(status => (status.getPath.getName, status.getLen))
+        fs.listStatus(new Path(tempDir)).map(status => (status.getPath.getName, status.getLen)).toSeq
           .collect {
           case file @ (partitionIdRegex(id), _) if nonEmptyPartitionIds.contains(id.toInt)
           => file
