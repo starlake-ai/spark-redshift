@@ -40,6 +40,14 @@ private[redshift] object FilterPushdown {
    * @param escapeQuote escape single quote if it is true. Generally, it the query is a subquery
    *                    (like in UNLOAD command), we need escape the quote.
    */
+  /**
+   * A timestamp compared with a Redshift column: the wall clock of the zone, as the connector
+   * writes and reads zone-less timestamps (see Conversions.sessionZone)
+   */
+  def timestampLiteral(ts: Timestamp, zone: java.time.ZoneId): String =
+    ts.toInstant.atZone(zone).toLocalDateTime
+      .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS"))
+
   def buildWhereClause(schema: StructType, filters: Seq[Filter],
                        escapeQuote: Boolean = false): String = {
     val filterExpressions = filters.flatMap(f => buildFilterExpression(schema, f, escapeQuote))
@@ -76,10 +84,11 @@ private[redshift] object FilterPushdown {
               s"'${value.asInstanceOf[Date]}'"
             }
           case TimestampType =>
+            val literal = timestampLiteral(value.asInstanceOf[Timestamp], Conversions.sessionZone())
             if (escapeQuote) {
-              s"''${value.asInstanceOf[Timestamp]}''"
+              s"''$literal''"
             } else {
-              s"'${value.asInstanceOf[Timestamp]}'"
+              s"'$literal'"
             }
           case TimestampNTZTypeExtractor(_) if !redshift.legacyTimestampHandling =>
             if (escapeQuote) {

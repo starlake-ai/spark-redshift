@@ -28,6 +28,7 @@ import java.util.Locale
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.GenericRow
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 /**
@@ -86,7 +87,21 @@ private[redshift] object Conversions {
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSS")
   }
 
-  def parseRedshiftTimestamp(s: String): Timestamp = {
+  /**
+   * Spark's session time zone, read on the driver. A Redshift TIMESTAMP has no zone: the connector
+   * reads and writes it as the wall clock of this zone, as Spark renders and parses zone-less
+   * timestamps. It is the JVM zone unless spark.sql.session.timeZone is set.
+   */
+  def sessionZone(): ZoneId = ZoneId.of(SQLConf.get.sessionLocalTimeZone)
+
+  /** A timestamp as the wall clock of the zone, in the format staged for COPY */
+  def formatRedshiftTimestamp(ts: Timestamp, zone: ZoneId): String =
+    createRedshiftTimestampFormat().format(ts.toInstant.atZone(zone).toLocalDateTime)
+
+  def parseRedshiftTimestamp(s: String): Timestamp = parseRedshiftTimestamp(s, ZoneId.systemDefault())
+
+  /** A Redshift timestamp: with an offset, that instant; without, a wall clock of the zone */
+  def parseRedshiftTimestamp(s: String, zone: ZoneId): Timestamp = {
     val temporalAccessor = formatter.parse(s)
 
     try {
@@ -96,7 +111,7 @@ private[redshift] object Conversions {
     catch {
       // Case timestamp without timezone
       case e: DateTimeException =>
-        Timestamp.valueOf(LocalDateTime.from(temporalAccessor))
+        Timestamp.from(LocalDateTime.from(temporalAccessor).atZone(zone).toInstant)
     }
   }
 
@@ -107,7 +122,8 @@ private[redshift] object Conversions {
    */
   def createRowConverter(schema: StructType,
                          nullString: String,
-                         overrideNullable: Boolean): Array[String] => InternalRow = {
+                         overrideNullable: Boolean,
+                         zone: ZoneId = ZoneId.systemDefault()): Array[String] => InternalRow = {
     val dateFormat = createRedshiftDateFormat()
     val decimalFormat = createRedshiftDecimalFormat()
     val conversionFunctions: Array[String => Any] = schema.fields.map { field =>
@@ -133,7 +149,7 @@ private[redshift] object Conversions {
         case LongType => (data: String) => java.lang.Long.parseLong(data)
         case ShortType => (data: String) => java.lang.Short.parseShort(data)
         case StringType => (data: String) => data
-        case TimestampType => (data: String) => parseRedshiftTimestamp(data)
+        case TimestampType => (data: String) => parseRedshiftTimestamp(data, zone)
         case _ => (data: String) => data
       }
     }
@@ -169,7 +185,8 @@ private[redshift] object Conversions {
   def parquetDataTypeConvert(from: Any,
                              dataType: DataType,
                              redshiftType: String,
-                             overrideNullable: Boolean): Any = {
+                             overrideNullable: Boolean,
+                             zone: ZoneId = ZoneId.systemDefault()): Any = {
     dataType match {
       case _ if overrideNullable && from!= null && from.toString.isEmpty => null
       // Redshift does not have a cast for single byte so it will be received as a string
@@ -223,17 +240,15 @@ private[redshift] object Conversions {
       // corresponding relative timestamp type. Instead, it supports the TimestampType which is an
       // instant type with a timezone. Therefore, the connector must make an assumption here as
       // there is simply not enough information in the data. For handling this case, the connector
-      // assumes any relative timestamps are relative to the local timezone where the connector is
-      // running. Note that if this is not correct, the user can set the spark local timezone to
-      // match the data since the connector always uses the local timezone to convert any relative
-      // timestamp data.
+      // assumes any relative timestamps are relative to Spark's session time zone (see
+      // sessionZone), as Spark does for zone-less timestamps.
       case DateType if from!=null && from.isInstanceOf[Long] =>
         DateTimeUtils.microsToDays(
           from.asInstanceOf[Long], ZoneId.of("UTC"))
       case TimestampType if redshift.legacyTimestampHandling && from!=null =>
         if (redshiftType == "timestamptz") {
           from
-        } else DateTimeUtils.toUTCTime(from.asInstanceOf[Long], ZoneId.systemDefault().getId)
+        } else DateTimeUtils.toUTCTime(from.asInstanceOf[Long], zone.getId)
       case _ => from
     }
   }

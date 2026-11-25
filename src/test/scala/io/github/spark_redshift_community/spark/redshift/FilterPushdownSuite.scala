@@ -91,4 +91,10 @@ class FilterPushdownSuite extends AnyFunSuite {
     StructField("test_string", StringType),
     StructField("test_timestamp", TimestampType)))
 
+  test("timestamp literals are the wall clock of the given zone") {
+    val ts = java.sql.Timestamp.from(java.time.Instant.parse("2010-01-31T23:04:15Z"))
+    assert(timestampLiteral(ts, java.time.ZoneId.of("UTC")) === "2010-01-31 23:04:15.000000")
+    assert(
+      timestampLiteral(ts, java.time.ZoneId.of("Europe/Paris")) === "2010-02-01 00:04:15.000000")
+  }
 }

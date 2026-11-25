@@ -78,6 +78,8 @@ private[redshift] class RedshiftFileFormat extends FileFormat {
 
     val broadcastedConf =
       sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
+    // Read on the driver: the reader below runs on the executors
+    val zone = java.time.ZoneId.of(sparkSession.sessionState.conf.sessionLocalTimeZone)
 
     (file: PartitionedFile) => {
       val conf = broadcastedConf.value.value
@@ -101,7 +103,8 @@ private[redshift] class RedshiftFileFormat extends FileFormat {
       val converter = Conversions.createRowConverter(requiredSchema,
         options.getOrElse("nullString", DEFAULT_PARAMETERS("csvnullstring")),
         options.getOrElse(PARAM_OVERRIDE_NULLABLE,
-          DEFAULT_PARAMETERS(PARAM_OVERRIDE_NULLABLE)).toBoolean)
+          DEFAULT_PARAMETERS(PARAM_OVERRIDE_NULLABLE)).toBoolean,
+        zone)
       iter.map(converter)
     }
   }

@@ -255,6 +255,8 @@ private[redshift] class RedshiftWriter(
     // Convert the rows so that timestamps and dates become formatted strings.
     // Formatters are not thread-safe, and thus these functions are not thread-safe.
     // However, each task gets its own deserialized copy, making this safe.
+    // Read on the driver: the functions below run on the executors
+    val zone = ZoneId.of(sqlContext.sparkSession.sessionState.conf.sessionLocalTimeZone)
     val conversionFunctions: Array[Any => Any] = data.schema.fields.map { field =>
       field.dataType match {
         case _: DecimalType if tempFormat != "PARQUET" =>
@@ -266,12 +268,12 @@ private[redshift] class RedshiftWriter(
           }
         case TimestampType if tempFormat != "PARQUET" =>
           (v: Any) => {
-            if (v == null) null else Conversions.createRedshiftTimestampFormat().format(v.asInstanceOf[Timestamp].toLocalDateTime)
+            if (v == null) null else Conversions.formatRedshiftTimestamp(v.asInstanceOf[Timestamp], zone)
           }
         case TimestampType => (v: Any) => if (v == null) null else {
           DateTimeUtils.toJavaTimestamp(DateTimeUtils.fromUTCTime(
             DateTimeUtils.fromJavaTimestamp(v.asInstanceOf[Timestamp]),
-            ZoneId.systemDefault.getId
+            zone.getId
           ))
         }
         case _ => (v: Any) => v

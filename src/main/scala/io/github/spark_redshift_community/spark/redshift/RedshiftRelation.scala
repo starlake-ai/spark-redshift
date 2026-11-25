@@ -479,13 +479,15 @@ case class RedshiftRelation(
     }
 
     if (conversionNeeded) {
+      // Read on the driver: the conversion below runs on the executors
+      val zone = java.time.ZoneId.of(sqlContext.sparkSession.sessionState.conf.sessionLocalTimeZone)
       jsonLoaded.queryExecution.executedPlan.execute().map({ row: InternalRow =>
         val typeConvertedRow = row.toSeq(jsonLoadedSchema).zipWithIndex.map {
           case (f, i) =>
             parquetDataTypeConvert(f, resultSchema.fields(i).dataType,
               if (resultSchema.fields(i).metadata.contains("redshift_type")) {
                 resultSchema.fields(i).metadata.getString("redshift_type")
-              } else null, overrideNullable)
+              } else null, overrideNullable, zone)
         }
         InternalRow(typeConvertedRow: _*)
       }).mapPartitions(

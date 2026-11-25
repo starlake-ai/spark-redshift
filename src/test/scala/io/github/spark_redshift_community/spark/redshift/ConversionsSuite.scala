@@ -19,6 +19,7 @@ package io.github.spark_redshift_community.spark.redshift.test
 
 import io.github.spark_redshift_community.spark.redshift.{Conversions, Parameters, RowEncoderUtils}
 import java.sql.Timestamp
+import java.time.{Instant, ZoneId}
 import java.util.Locale
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.encoders.{ExpressionEncoder, RowEncoder}
@@ -162,5 +163,31 @@ class ConversionsSuite extends AnyFunSuite {
     assert(convert(decimal, IntegerType) === 123)
     assert(convert(decimal, LongType) === 123L)
     assert(convert(decimal, ShortType) === 123.toShort)
+  }
+
+  // A zone-less Redshift TIMESTAMP holds the wall clock of Spark's session time zone, not of the
+  // JVM: the two differ whenever spark.sql.session.timeZone is set
+  private val instant = Timestamp.from(Instant.parse("2010-01-31T23:04:15Z"))
+  private val utc = ZoneId.of("UTC")
+  private val paris = ZoneId.of("Europe/Paris")
+
+  test("timestamps are staged as the wall clock of the given zone") {
+    assert(Conversions.formatRedshiftTimestamp(instant, utc) === "2010-01-31 23:04:15.00000000")
+    assert(Conversions.formatRedshiftTimestamp(instant, paris) === "2010-02-01 00:04:15.00000000")
+  }
+
+  test("zone-less timestamps are read in the given zone") {
+    assert(Conversions.parseRedshiftTimestamp("2010-01-31 23:04:15", utc) === instant)
+    assert(Conversions.parseRedshiftTimestamp("2010-02-01 00:04:15", paris) === instant)
+    // an offset wins over the zone
+    assert(Conversions.parseRedshiftTimestamp("2010-02-01 01:04:15+02", utc) === instant)
+  }
+
+  test("the row converter reads zone-less timestamps in the given zone") {
+    val schema = StructType(Seq(StructField("a", TimestampType)))
+    val converter = Conversions
+      .createRowConverter(schema, Parameters.DEFAULT_PARAMETERS("csvnullstring"), false, paris)
+      .andThen(RowEncoderUtils.expressionEncoderForSchema(schema).resolveAndBind().createDeserializer())
+    assert(converter(Array("2010-02-01 00:04:15")) === Row(instant))
   }
 }
